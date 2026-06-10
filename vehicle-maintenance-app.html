@@ -271,7 +271,11 @@
         .btn-secondary:hover { background: #047857; transform: translateY(-2px); }
         .btn-danger { background: var(--danger); color: white; padding: 8px 12px; font-size: 0.85em; }
         .btn-danger:hover { background: #991b1b; }
+        .btn-edit { background: var(--secondary); color: white; padding: 8px 12px; font-size: 0.85em; }
+        .btn-edit:hover { background: #047857; }
         .btn-block { width: 100%; justify-content: center; }
+        .btn-cancel-edit { display: none; background: var(--border); color: var(--text); margin-top: 10px; }
+        .btn-cancel-edit:hover { background: #cbd5e1; }
 
         .records-list { display: flex; flex-direction: column; gap: 15px; }
 
@@ -534,7 +538,7 @@
                     <!-- Records Tab -->
                     <div id="records" class="tab-content">
                         <div class="card">
-                            <div class="card-title">整備記録を追加</div>
+                            <div class="card-title" id="recordFormTitle">整備記録を追加</div>
                             <form id="recordForm" onsubmit="addRecord(event)">
                                 <div class="form-row">
                                     <div class="form-group">
@@ -555,7 +559,7 @@
                                         <option value="プラグ交換">プラグ交換</option>
                                         <option value="バッテリー交換">バッテリー交換</option>
                                         <option value="車検費用">車検費用</option>
-                                        <option value="保険料">保険料</option>
+                                        <option value="保険費用">保険費用</option>
                                         <option value="点検">点検</option>
                                         <option value="修理">修理</option>
                                         <option value="カスタム">カスタム</option>
@@ -571,7 +575,8 @@
                                     <label>内容・メモ</label>
                                     <textarea id="recordNotes" placeholder="整備内容の詳細..." rows="4"></textarea>
                                 </div>
-                                <button type="submit" class="btn btn-primary btn-block">記録を保存</button>
+                                <button type="submit" class="btn btn-primary btn-block" id="recordSubmitBtn">記録を保存</button>
+                                <button type="button" class="btn btn-block btn-cancel-edit" id="cancelEditBtn" onclick="cancelEdit()">修正をやめる</button>
                             </form>
                         </div>
                         <div class="card mt-20">
@@ -822,6 +827,7 @@
 
         async function selectVehicle(id) {
             appData.currentVehicleId = id;
+            if (editingRecordId) cancelEdit();
             await saveData();
             renderAll();
         }
@@ -911,6 +917,7 @@
                             <div><div class="record-date">${escapeHtml(r.date)}</div><span class="record-category">${escapeHtml(r.category)}</span></div>
                             <div style="display: flex; gap: 10px; align-items: center;">
                                 <div class="record-cost">¥${r.cost.toLocaleString()}</div>
+                                <button class="btn btn-edit" onclick="editRecord(${r.id})">編集</button>
                                 <button class="btn btn-danger" onclick="deleteRecord(${r.id})">削除</button>
                             </div>
                         </div>
@@ -979,7 +986,9 @@
             window.scrollTo({ top: 0 });
         }
 
-        // 整備記録追加
+        // 整備記録の追加・修正
+        let editingRecordId = null;
+
         async function addRecord(e) {
             e.preventDefault();
             const date = document.getElementById('recordDate').value;
@@ -988,19 +997,59 @@
             const mileage = parseInt(document.getElementById('recordMileage').value) || 0;
             const notes = document.getElementById('recordNotes').value;
 
-            appData.records.push({ id: Date.now(), vehicleId: appData.currentVehicleId, date, category, cost, mileage, notes });
+            if (editingRecordId) {
+                // 修正モード：既存の記録を上書き
+                const record = appData.records.find(r => r.id === editingRecordId);
+                if (record) {
+                    record.date = date;
+                    record.cost = cost;
+                    record.category = category;
+                    record.mileage = mileage;
+                    record.notes = notes;
+                }
+            } else {
+                // 新規追加
+                appData.records.push({ id: Date.now(), vehicleId: appData.currentVehicleId, date, category, cost, mileage, notes });
+            }
+
             await saveData();
-            document.getElementById('recordForm').reset();
-            document.getElementById('recordDate').value = new Date().toISOString().split('T')[0];
+            cancelEdit();
             renderRecords();
             updateDashboard();
             renderCosts();
+        }
+
+        // 記録をフォームに呼び出して修正モードにする
+        function editRecord(id) {
+            const r = appData.records.find(x => x.id === id);
+            if (!r) return;
+            editingRecordId = id;
+            document.getElementById('recordDate').value = r.date;
+            document.getElementById('recordCost').value = r.cost;
+            document.getElementById('recordCategory').value = r.category;
+            document.getElementById('recordMileage').value = r.mileage || '';
+            document.getElementById('recordNotes').value = r.notes || '';
+            document.getElementById('recordFormTitle').textContent = '✏️ 整備記録を修正中';
+            document.getElementById('recordSubmitBtn').textContent = '修正を保存';
+            document.getElementById('cancelEditBtn').style.display = 'inline-flex';
+            document.getElementById('recordForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // 修正モードを解除してフォームを新規追加状態に戻す
+        function cancelEdit() {
+            editingRecordId = null;
+            document.getElementById('recordForm').reset();
+            document.getElementById('recordDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('recordFormTitle').textContent = '整備記録を追加';
+            document.getElementById('recordSubmitBtn').textContent = '記録を保存';
+            document.getElementById('cancelEditBtn').style.display = 'none';
         }
 
         // 整備記録削除
         async function deleteRecord(id) {
             if (confirm('この記録を削除してもよろしいですか？')) {
                 appData.records = appData.records.filter(r => r.id !== id);
+                if (editingRecordId === id) cancelEdit();
                 await saveData();
                 renderRecords();
                 updateDashboard();
