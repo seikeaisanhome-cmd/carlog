@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>CarLog - 車両整備管理システム</title>
     <style>
         :root {
@@ -121,7 +121,7 @@
             margin-bottom: 30px;
         }
 
-        @media (max-width: 1024px) { .main-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 1024px) { .main-grid { grid-template-columns: minmax(0, 1fr); } }
 
         .sidebar {
             background: white;
@@ -196,6 +196,7 @@
 
         .tab-btn:hover { color: var(--primary); background: var(--light); }
         .tab-btn.active { background: var(--primary); color: white; }
+        .tab-btn .tab-icon { margin-right: 6px; }
 
         .tab-content { display: none; }
         .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
@@ -358,9 +359,9 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        .alert-warning { background: rgba(245,158,11,0.1); border-left: 4px solid var(--accent); color: #92400e; }
-        .alert-danger { background: rgba(220,38,38,0.1); border-left: 4px solid var(--danger); color: #7f1d1d; }
-        .alert-success { background: rgba(5,150,105,0.1); border-left: 4px solid var(--secondary); color: #065f46; }
+        .alert-warning { background: #fef3c7; border-left: 4px solid var(--accent); color: #92400e; }
+        .alert-danger { background: #fee2e2; border-left: 4px solid var(--danger); color: #7f1d1d; }
+        .alert-success { background: #d1fae5; border-left: 4px solid var(--secondary); color: #065f46; }
         .alert-icon { font-size: 1.5em; flex-shrink: 0; }
         .alert-content { flex: 1; }
         .alert-title { font-weight: 600; margin-bottom: 3px; }
@@ -371,6 +372,100 @@
             text-align: center;
             padding: 40px;
             color: var(--text-muted);
+        }
+
+        /* ===== スマホ向けレイアウト ===== */
+        @media (max-width: 768px) {
+            .container { padding: 12px; padding-bottom: 95px; }
+
+            /* ヘッダーをコンパクトに */
+            .header { padding: 15px 18px; margin-bottom: 15px; }
+            .header-left h1 { font-size: 1.4em; }
+            .header-left p { display: none; }
+            .user-info { display: none; }
+            .btn-logout { padding: 10px 14px; min-height: 44px; }
+
+            .main-grid { gap: 15px; margin-bottom: 0; }
+            .content { gap: 15px; }
+
+            /* 車両一覧を横スクロールの選択バーに */
+            .sidebar { position: static; padding: 12px 15px; }
+            .sidebar h3 { font-size: 1em; margin-bottom: 10px; }
+            .vehicle-list {
+                flex-direction: row;
+                overflow-x: auto;
+                gap: 8px;
+                margin-bottom: 10px;
+                padding-bottom: 4px;
+                -webkit-overflow-scrolling: touch;
+            }
+            .vehicle-item {
+                flex: 0 0 auto;
+                white-space: nowrap;
+                padding: 10px 14px;
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+            }
+            .vehicle-item:hover { transform: none; }
+            .btn-add-vehicle { padding: 12px; min-height: 48px; }
+
+            /* タブを画面下部に固定（アプリ風ボトムナビ） */
+            .tabs {
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                z-index: 500;
+                border-radius: 16px 16px 0 0;
+                box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+                padding: 6px 8px;
+                padding-bottom: calc(6px + env(safe-area-inset-bottom));
+                gap: 4px;
+            }
+            .tab-btn {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 2px;
+                padding: 8px 2px;
+                min-height: 56px;
+            }
+            .tab-btn .tab-icon { font-size: 1.4em; margin-right: 0; }
+            .tab-btn .tab-label { font-size: 0.65em; }
+
+            /* カード・統計 */
+            .card { padding: 18px 15px; border-radius: 10px; }
+            .card-title { font-size: 1.15em; margin-bottom: 15px; }
+            .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+            .stat-card { padding: 14px; }
+            .stat-label { font-size: 0.8em; }
+            .stat-value { font-size: 1.3em; }
+
+            /* 入力をタップしやすく（16pxでiPhoneの自動ズームも防止） */
+            input, select, textarea { font-size: 16px; padding: 14px; }
+            input, select { min-height: 48px; }
+            label { font-size: 0.9em; }
+            .btn { min-height: 48px; padding: 12px 20px; }
+
+            /* 記録一覧：削除ボタンの誤タップ防止 */
+            .record-item { padding: 15px; }
+            .record-header { flex-wrap: wrap; gap: 8px; }
+            .btn-danger { min-height: 40px; padding: 8px 16px; }
+
+            /* モーダルを下から出るシート式に */
+            .modal { align-items: flex-end; }
+            .modal-content {
+                width: 100%;
+                max-width: 100%;
+                border-radius: 16px 16px 0 0;
+                max-height: 88vh;
+                padding: 22px 18px;
+                padding-bottom: calc(22px + env(safe-area-inset-bottom));
+            }
+
+            .alert { padding: 12px 14px; gap: 10px; }
+            .alert-title { font-size: 0.95em; }
+            .alert-message { font-size: 0.85em; }
         }
     </style>
 </head>
@@ -420,10 +515,10 @@
                 <!-- Content -->
                 <div class="content">
                     <div class="tabs">
-                        <button class="tab-btn active" onclick="switchTab('dashboard', event)">📊 ダッシュボード</button>
-                        <button class="tab-btn" onclick="switchTab('records', event)">📝 整備記録</button>
-                        <button class="tab-btn" onclick="switchTab('costs', event)">💰 費用分析</button>
-                        <button class="tab-btn" onclick="switchTab('vehicle-info', event)">ℹ️ 車両情報</button>
+                        <button class="tab-btn active" onclick="switchTab('dashboard', event)"><span class="tab-icon">📊</span><span class="tab-label">ダッシュボード</span></button>
+                        <button class="tab-btn" onclick="switchTab('records', event)"><span class="tab-icon">📝</span><span class="tab-label">整備記録</span></button>
+                        <button class="tab-btn" onclick="switchTab('costs', event)"><span class="tab-icon">💰</span><span class="tab-label">費用分析</span></button>
+                        <button class="tab-btn" onclick="switchTab('vehicle-info', event)"><span class="tab-icon">ℹ️</span><span class="tab-label">車両情報</span></button>
                     </div>
 
                     <!-- Dashboard Tab -->
@@ -876,7 +971,11 @@
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             document.getElementById(tabName).classList.add('active');
-            if (e && e.target) e.target.classList.add('active');
+            if (e && e.target) {
+                const btn = e.target.closest('.tab-btn');
+                if (btn) btn.classList.add('active');
+            }
+            window.scrollTo({ top: 0 });
         }
 
         // 整備記録追加
