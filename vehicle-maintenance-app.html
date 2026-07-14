@@ -299,6 +299,49 @@
 
         .chart-container { background: var(--light); padding: 20px; border-radius: 10px; margin: 20px 0; max-height: 400px; position: relative; }
 
+        /* 月別費用の棒グラフ */
+        .bar-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            background: var(--light);
+            border-radius: 10px;
+            padding: 15px 10px 10px;
+        }
+        .bar-col {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .bar-val {
+            font-size: 0.62em;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+            white-space: nowrap;
+            height: 1.2em;
+        }
+        .bar-area {
+            height: 110px;
+            width: 100%;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+        }
+        .bar-fill {
+            width: 100%;
+            max-width: 26px;
+            background: linear-gradient(180deg, var(--primary-light), var(--primary));
+            border-radius: 4px 4px 0 0;
+        }
+        .bar-label {
+            font-size: 0.65em;
+            color: var(--text-muted);
+            margin-top: 5px;
+            white-space: nowrap;
+        }
+
         .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
         .empty-state h3 { color: var(--text); margin-bottom: 10px; font-size: 1.2em; }
 
@@ -584,6 +627,23 @@
                         </div>
                         <div class="card mt-20">
                             <div class="card-title">整備記録一覧</div>
+                            <div class="form-group">
+                                <label>カテゴリで絞り込み</label>
+                                <select id="recordFilter" onchange="changeRecordFilter()">
+                                    <option value="">すべて表示</option>
+                                    <option value="オイル交換">オイル交換</option>
+                                    <option value="タイヤ交換">タイヤ交換</option>
+                                    <option value="プラグ交換">プラグ交換</option>
+                                    <option value="バッテリー交換">バッテリー交換</option>
+                                    <option value="車検費用">車検費用</option>
+                                    <option value="保険費用">保険費用</option>
+                                    <option value="点検">点検</option>
+                                    <option value="修理">修理</option>
+                                    <option value="カスタム">カスタム</option>
+                                    <option value="パーツ交換">パーツ交換</option>
+                                    <option value="その他">その他</option>
+                                </select>
+                            </div>
                             <div class="records-list" id="recordsList"></div>
                         </div>
                     </div>
@@ -593,6 +653,10 @@
                         <div class="card">
                             <div class="card-title">💰 費用分析</div>
                             <div class="stats-grid" id="costStatsGrid"></div>
+                            <div class="mt-20">
+                                <h3 style="color: var(--primary); margin-bottom: 15px;">📈 月別費用（過去12ヶ月）</h3>
+                                <div class="bar-chart" id="monthlyChart"></div>
+                            </div>
                             <div class="mt-20">
                                 <h3 style="color: var(--primary); margin-bottom: 15px;">カテゴリ別費用</h3>
                                 <div id="categoryCosts"></div>
@@ -903,16 +967,29 @@
             }
         }
 
+        // カテゴリ絞り込み
+        let recordFilter = '';
+
+        function changeRecordFilter() {
+            recordFilter = document.getElementById('recordFilter').value;
+            renderRecords();
+        }
+
         function renderRecords() {
             const vehicle = appData.vehicles.find(v => v.id === appData.currentVehicleId);
             if (!vehicle) return;
 
-            const vehicleRecords = [...appData.records.filter(r => r.vehicleId === vehicle.id)]
+            let vehicleRecords = [...appData.records.filter(r => r.vehicleId === vehicle.id)]
                 .sort((a, b) => b.date.localeCompare(a.date));
+            if (recordFilter) {
+                vehicleRecords = vehicleRecords.filter(r => r.category === recordFilter);
+            }
             const recordsList = document.getElementById('recordsList');
 
             if (vehicleRecords.length === 0) {
-                recordsList.innerHTML = '<div class="empty-state"><h3>整備記録がありません</h3><p>最初の整備記録を追加しましょう</p></div>';
+                recordsList.innerHTML = recordFilter
+                    ? '<div class="empty-state"><h3>該当する記録がありません</h3><p>「' + escapeHtml(recordFilter) + '」の記録はまだありません</p></div>'
+                    : '<div class="empty-state"><h3>整備記録がありません</h3><p>最初の整備記録を追加しましょう</p></div>';
             } else {
                 recordsList.innerHTML = vehicleRecords.map(r => `
                     <div class="record-item">
@@ -948,6 +1025,8 @@
                 <div class="stat-card"><div class="stat-label">記録数</div><div class="stat-value">${vehicleRecords.length}</div></div>
             `;
 
+            renderMonthlyChart(vehicleRecords);
+
             document.getElementById('categoryCosts').innerHTML = Object.entries(costByCategory)
                 .sort((a, b) => b[1] - a[1])
                 .map(([category, cost]) => `
@@ -961,6 +1040,48 @@
                         </div>
                     </div>
                 `).join('');
+        }
+
+        // 月別費用の棒グラフ（過去12ヶ月）
+        function renderMonthlyChart(vehicleRecords) {
+            const chart = document.getElementById('monthlyChart');
+            if (!chart) return;
+
+            const now = new Date();
+            const months = [];
+            for (let i = 11; i >= 0; i--) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+                months.push({ key, label: (d.getMonth() + 1) + '月', total: 0 });
+            }
+
+            vehicleRecords.forEach(r => {
+                if (!r.date) return;
+                const m = months.find(m => r.date.startsWith(m.key));
+                if (m) m.total += r.cost;
+            });
+
+            const max = Math.max(...months.map(m => m.total), 1);
+
+            chart.innerHTML = months.map(m => {
+                const heightPct = m.total > 0 ? Math.max((m.total / max) * 100, 4) : 1;
+                return `
+                    <div class="bar-col">
+                        <div class="bar-val">${m.total > 0 ? formatCompactYen(m.total) : ''}</div>
+                        <div class="bar-area"><div class="bar-fill" style="height: ${heightPct}%;"></div></div>
+                        <div class="bar-label">${m.label}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 金額を短く表示（12000 → 1.2万）
+        function formatCompactYen(v) {
+            if (v >= 10000) {
+                const man = Math.round(v / 1000) / 10;
+                return man + '万';
+            }
+            return v.toLocaleString();
         }
 
         function loadVehicleInfo() {
