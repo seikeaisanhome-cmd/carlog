@@ -875,6 +875,7 @@
         }
 
         function signOut() {
+            stopSync();
             auth.signOut();
         }
 
@@ -885,7 +886,7 @@
                 document.getElementById('loginScreen').style.display = 'none';
                 document.getElementById('mainApp').style.display = 'block';
                 document.getElementById('userInfo').textContent = user.displayName || user.email;
-                await loadData();
+                await startSync();
                 renderAll();
                 const today = new Date().toISOString().split('T')[0];
                 document.getElementById('recordDate').value = today;
@@ -895,30 +896,92 @@
             }
         });
 
-        // Firestore からデータを読み込む
-        async function loadData() {
-            if (!currentUser) return;
-            try {
-                const doc = await db.collection('users').doc(currentUser.uid).collection('data').doc('appData').get();
-                if (doc.exists) {
-                    appData = doc.data();
-                } else {
-                    // 初回: デモデータなし（空の状態から始める）
-                    appData = { vehicles: [], records: [], currentVehicleId: null };
-                    await saveData();
-                }
-            } catch (e) {
-                console.error('データ読み込みエラー:', e);
-            }
+        // ===== データの同期 =====
+        // ・保存するときは、クラウド上の最新データを読み直してから変更を加える（古い画面の内容で上書きしない）
+        // ・ほかの端末で変更があったら、開いている画面にも自動で反映する
+        // ・「どの車両を表示しているか」は端末ごとに覚える（スマホで切り替えてもPCは切り替わらない）
+        const VEHICLE_KEY = 'carlog.selectedVehicleId';
+        let unsubscribeSync = null;
+
+        function dataRef() {
+            return db.collection('users').doc(currentUser.uid).collection('data').doc('appData');
         }
 
-        // Firestore へデータを保存
-        async function saveData() {
-            if (!currentUser) return;
-            try {
-                await db.collection('users').doc(currentUser.uid).collection('data').doc('appData').set(appData);
-            } catch (e) {
-                console.error('データ保存エラー:', e);
+        function loadSelectedVehicleId() {
+            try { return Number(localStorage.getItem(VEHICLE_KEY)) || null; } catch (e) { return null; }
+        }
+
+        function storeSelectedVehicleId(id) {
+            try { localStorage.setItem(VEHICLE_KEY, String(id)); } catch (e) { /* 保存できなくても動作は続ける */ }
+        }
+
+        // クラウドから届いたデータを画面用のデータに反映する
+        function applyData(data) {
+            const vehicles = (data && data.vehicles) || [];
+            let selected = appData.currentVehicleId || loadSelectedVehicleId() || (data && data.currentVehicleId) || null;
+            if (!vehicles.some(v => v.id === selected)) selected = vehicles.length ? vehicles[0].id : null;
+            appData = {
+                vehicles,
+                records: (data && data.records) || [],
+                lastBackupAt: (data && data.lastBackupAt) || null,
+                currentVehicleId: selected
+            };
+        }
+
+        // 変更を安全に保存する。change(data) の中で最新データを書き換える。false を返すと保存しない
+        async function updateData(change) {
+            const saved = await db.runTransaction(async t => {
+                const snap = await t.get(dataRef());
+                const data = snap.exists ? snap.data() : {};
+                data.vehicles = data.vehicles || [];
+                data.records = data.records || [];
+                if (change(data) === false) return null;
+                delete data.currentVehicleId;
+                t.set(dataRef(), data);
+                return data;
+            });
+            if (saved) applyData(saved);
+            return saved;
+        }
+
+        // 開いている間ずっとクラウドの変更を見張る。最初のデータが届いたら完了
+        function startSync() {
+            stopSync();
+            return new Promise(resolve => {
+                let first = true;
+                const done = () => { if (first) { first = false; resolve(); } };
+                unsubscribeSync = dataRef().onSnapshot(async snap => {
+                    if (!snap.exists) {
+                        // 初回：空の状態から始める
+                        try { await dataRef().set({ vehicles: [], records: [] }); } catch (e) { console.error(e); done(); }
+                        return;
+                    }
+                    if (snap.metadata.hasPendingWrites) return;
+                    applyData(snap.data());
+                    if (first) done(); else refreshAfterSync();
+                }, err => {
+                    console.error('データ読み込みエラー:', err);
+                    done();
+                });
+            });
+        }
+
+        function stopSync() {
+            if (unsubscribeSync) { unsubscribeSync(); unsubscribeSync = null; }
+        }
+
+        // ほかの端末の変更が届いたときの画面更新（入力中の内容は消さない）
+        function refreshAfterSync() {
+            renderVehicles();
+            updateDashboard();
+            renderRecords();
+            renderCosts();
+            const vehicleForm = document.getElementById('vehicleForm');
+            if (!vehicleForm.contains(document.activeElement)) loadVehicleInfo();
+            updateLastBackupInfo();
+            if (editingRecordId && !appData.records.some(r => r.id === editingRecordId)) {
+                cancelEdit();
+                alert('修正中の記録が、別の端末で削除されました。');
             }
         }
 
@@ -955,8 +1018,8 @@
 
         async function selectVehicle(id) {
             appData.currentVehicleId = id;
+            storeSelectedVehicleId(id);
             if (editingRecordId) cancelEdit();
-            await saveData();
             renderAll();
         }
 
@@ -1064,10 +1127,18 @@
         }
 
         async function markTaxPaid(vehicleId) {
-            const vehicle = appData.vehicles.find(v => v.id === vehicleId);
-            if (!vehicle) return;
-            vehicle.taxPaidYear = new Date().getFullYear();
-            await saveData();
+            const year = new Date().getFullYear();
+            try {
+                await updateData(d => {
+                    const v = d.vehicles.find(x => x.id === vehicleId);
+                    if (!v) return false;
+                    v.taxPaidYear = year;
+                });
+            } catch (e) {
+                console.error(e);
+                alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
+                return;
+            }
             updateDashboard();
             loadVehicleInfo();
         }
@@ -1206,7 +1277,31 @@
             const year = new Date().getFullYear();
             document.getElementById('vehicleTaxPaid').checked = vehicle.taxPaidYear === year;
             document.getElementById('vehicleTaxPaidLabel').textContent = `${year}年の自動車税（軽自動車税）は納付済み`;
+            vehicleFormBase = {
+                vehicleId: vehicle.id,
+                values: readVehicleForm(),
+                taxChecked: document.getElementById('vehicleTaxPaid').checked
+            };
             updateLastBackupInfo();
+        }
+
+        // 車両情報の画面に表示した時点の内容（どこを書き換えたか比べるため）
+        let vehicleFormBase = null;
+
+        function readVehicleForm() {
+            const val = id => document.getElementById(id).value;
+            return {
+                name: val('vehicleName'),
+                type: val('vehicleType'),
+                maker: val('vehicleMaker'),
+                model: val('vehicleModel'),
+                year: val('vehicleYear'),
+                modelCode: val('vehicleModelCode'),
+                regNumber: val('vehicleRegNumber'),
+                inspectionDate: val('vehicleInspectionDate'),
+                insuranceDate: val('vehicleInsuranceDate'),
+                mileage: val('vehicleMileage')
+            };
         }
 
         // タブ切り替え
@@ -1236,27 +1331,25 @@
             submitBtn.disabled = true;
             submitBtn.textContent = '保存中...';
 
+            const editingId = editingRecordId;
+            const vehicleId = appData.currentVehicleId;
+            let missing = false;
             try {
-                const recordId = editingRecordId || Date.now();
+                const recordId = editingId || Date.now();
                 const photoIds = await savePhotos(recordId);
 
-                if (editingRecordId) {
-                    // 修正モード：既存の記録を上書き
-                    const record = appData.records.find(r => r.id === editingRecordId);
-                    if (record) {
-                        record.date = date;
-                        record.cost = cost;
-                        record.category = category;
-                        record.mileage = mileage;
-                        record.notes = notes;
-                        record.photoIds = photoIds;
+                await updateData(d => {
+                    missing = false;
+                    if (editingId) {
+                        // 修正モード：最新データの中の同じ記録を書き換える
+                        const record = d.records.find(r => r.id === editingId);
+                        if (!record) { missing = true; return false; }
+                        Object.assign(record, { date, cost, category, mileage, notes, photoIds });
+                    } else {
+                        // 新規追加
+                        d.records.push({ id: recordId, vehicleId, date, category, cost, mileage, notes, photoIds });
                     }
-                } else {
-                    // 新規追加
-                    appData.records.push({ id: recordId, vehicleId: appData.currentVehicleId, date, category, cost, mileage, notes, photoIds });
-                }
-
-                await saveData();
+                });
             } catch (err) {
                 console.error(err);
                 alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
@@ -1265,6 +1358,7 @@
                 return;
             }
             submitBtn.disabled = false;
+            if (missing) alert('この記録は別の端末で削除されていたため、修正を保存できませんでした。');
             cancelEdit();
             renderRecords();
             updateDashboard();
@@ -1311,9 +1405,14 @@
                         delete photoCache[pid];
                     }
                 }
-                appData.records = appData.records.filter(r => r.id !== id);
+                try {
+                    await updateData(d => { d.records = d.records.filter(r => r.id !== id); });
+                } catch (e) {
+                    console.error(e);
+                    alert('削除に失敗しました。通信状況を確認してもう一度お試しください。');
+                    return;
+                }
                 if (editingRecordId === id) cancelEdit();
-                await saveData();
                 renderRecords();
                 updateDashboard();
                 renderCosts();
@@ -1323,7 +1422,7 @@
         // 車両追加
         async function addVehicle(e) {
             e.preventDefault();
-            appData.vehicles.push({
+            const newVehicle = {
                 id: Date.now(),
                 name: document.getElementById('newVehicleName').value,
                 type: document.getElementById('newVehicleType').value,
@@ -1335,11 +1434,19 @@
                 regNumber: '',
                 inspectionDate: document.getElementById('newVehicleInspectionDate').value,
                 insuranceDate: document.getElementById('newVehicleInsuranceDate').value
-            });
-            if (!appData.currentVehicleId) {
-                appData.currentVehicleId = appData.vehicles[0].id;
+            };
+            const hadVehicle = appData.vehicles.length > 0;
+            try {
+                await updateData(d => { d.vehicles.push(newVehicle); });
+            } catch (err) {
+                console.error(err);
+                alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
+                return;
             }
-            await saveData();
+            if (!hadVehicle) {
+                appData.currentVehicleId = newVehicle.id;
+                storeSelectedVehicleId(newVehicle.id);
+            }
             closeAddVehicleModal();
             renderAll();
         }
@@ -1347,27 +1454,50 @@
         // 車両情報更新
         async function updateVehicleInfo(e) {
             e.preventDefault();
-            const vehicle = appData.vehicles.find(v => v.id === appData.currentVehicleId);
-            if (!vehicle) return;
-            vehicle.name = document.getElementById('vehicleName').value;
-            vehicle.type = document.getElementById('vehicleType').value;
-            vehicle.maker = document.getElementById('vehicleMaker').value;
-            vehicle.model = document.getElementById('vehicleModel').value;
-            vehicle.year = parseInt(document.getElementById('vehicleYear').value) || new Date().getFullYear();
-            vehicle.modelCode = document.getElementById('vehicleModelCode').value;
-            vehicle.regNumber = document.getElementById('vehicleRegNumber').value;
-            vehicle.inspectionDate = document.getElementById('vehicleInspectionDate').value;
-            vehicle.insuranceDate = document.getElementById('vehicleInsuranceDate').value;
-            vehicle.mileage = parseInt(document.getElementById('vehicleMileage').value);
-            const thisYear = new Date().getFullYear();
-            if (document.getElementById('vehicleTaxPaid').checked) {
-                vehicle.taxPaidYear = thisYear;
-            } else if (vehicle.taxPaidYear === thisYear) {
-                vehicle.taxPaidYear = null;
+            const vehicleId = appData.currentVehicleId;
+            if (!appData.vehicles.some(v => v.id === vehicleId)) return;
+            // 画面を開いたときから書き換えた項目だけを保存する（ほかの端末で変えた項目を消さないため）
+            const current = readVehicleForm();
+            const base = vehicleFormBase && vehicleFormBase.vehicleId === vehicleId ? vehicleFormBase.values : {};
+            const changes = {};
+            for (const key of Object.keys(current)) {
+                if (current[key] !== base[key]) changes[key] = current[key];
             }
-            await saveData();
+            const taxChecked = document.getElementById('vehicleTaxPaid').checked;
+            const taxChanged = taxChecked !== (vehicleFormBase ? vehicleFormBase.taxChecked : !taxChecked);
+            const thisYear = new Date().getFullYear();
+            let missing = false;
+            try {
+                await updateData(d => {
+                    missing = false;
+                    const vehicle = d.vehicles.find(v => v.id === vehicleId);
+                    if (!vehicle) { missing = true; return false; }
+                    for (const key of Object.keys(changes)) {
+                        // 年式・走行距離は空欄なら数字に直す（年式の空欄は今年）
+                        if (key === 'year') vehicle.year = parseInt(changes.year) || new Date().getFullYear();
+                        else if (key === 'mileage') vehicle.mileage = parseInt(changes.mileage) || 0;
+                        else vehicle[key] = changes[key];
+                    }
+                    if (taxChanged) {
+                        if (taxChecked) {
+                            vehicle.taxPaidYear = thisYear;
+                        } else if (vehicle.taxPaidYear === thisYear) {
+                            vehicle.taxPaidYear = null;
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error(err);
+                alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
+                return;
+            }
+            if (missing) {
+                alert('この車両は別の端末で削除されていたため、保存できませんでした。');
+                return;
+            }
             renderVehicles();
             updateDashboard();
+            loadVehicleInfo();
             alert('車両情報を更新しました');
         }
 
@@ -1570,8 +1700,11 @@
                     photos
                 };
                 const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
-                appData.lastBackupAt = backup.exportedAt;
-                await saveData();
+                try {
+                    await updateData(d => { d.lastBackupAt = backup.exportedAt; });
+                } catch (err) {
+                    console.error(err); // 日付の記録に失敗しても、バックアップ自体は保存できる
+                }
                 updateLastBackupInfo();
                 saveFile(blob, `carlog-backup-${todayStamp()}.json`, `車両${appData.vehicles.length}台・記録${appData.records.length}件・写真${photos.length}枚のバックアップです。`);
             } catch (e) {
@@ -1617,8 +1750,11 @@
                     await photosCol().doc(p.id).set({ dataUrl: p.dataUrl, recordId: p.recordId || null, createdAt: p.createdAt || new Date().toISOString() });
                     photoCache[p.id] = p.dataUrl;
                 }
-                appData = data;
-                await saveData();
+                await updateData(d => {
+                    d.vehicles = data.vehicles;
+                    d.records = data.records;
+                    d.lastBackupAt = data.lastBackupAt || null;
+                });
                 cancelEdit();
                 renderAll();
                 alert('バックアップから元に戻しました。');
