@@ -276,6 +276,26 @@
         .btn-edit { background: var(--secondary); color: white; padding: 8px 12px; font-size: 0.85em; }
         .btn-edit:hover { background: #047857; }
         .btn-block { width: 100%; justify-content: center; }
+        .btn-photo-pick, .btn-restore { background: var(--light); color: var(--primary); border: 2px dashed var(--primary-light); }
+        .btn-photo-pick { margin-bottom: 10px; }
+        .mt-10 { margin-top: 10px; }
+        .help-text { color: var(--text-muted); font-size: 0.9em; margin-bottom: 12px; line-height: 1.5; }
+        .check-label { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+        .check-label input { width: 22px; height: 22px; min-height: 0; flex-shrink: 0; }
+        .alert-action { margin-top: 8px; padding: 8px 14px; min-height: 36px; font-size: 0.85em; background: white; color: var(--text); border: 1px solid currentColor; }
+
+        /* 写真 */
+        .photo-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+        .photo-thumb { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--light); }
+        .photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .photo-thumb .photo-remove {
+            position: absolute; top: 2px; right: 2px;
+            width: 24px; height: 24px; border-radius: 50%;
+            border: none; background: rgba(0,0,0,0.65); color: white;
+            font-size: 14px; line-height: 24px; cursor: pointer; padding: 0;
+        }
+        .btn-photos { background: var(--light); color: var(--primary); border: 1px solid var(--border); padding: 6px 12px; font-size: 0.85em; margin-top: 8px; }
+        .photo-full { width: 100%; border-radius: 8px; margin-bottom: 12px; display: block; }
         .btn-cancel-edit { display: none; background: var(--border); color: var(--text); margin-top: 10px; }
         .btn-cancel-edit:hover { background: #cbd5e1; }
 
@@ -621,6 +641,12 @@
                                     <label>内容・メモ</label>
                                     <textarea id="recordNotes" placeholder="整備内容の詳細..." rows="4"></textarea>
                                 </div>
+                                <div class="form-group">
+                                    <label>レシート・明細の写真（任意・最大5枚）</label>
+                                    <label class="btn btn-photo-pick" for="recordPhotoInput">📷 写真を追加</label>
+                                    <input type="file" id="recordPhotoInput" accept="image/*" multiple style="display:none" onchange="onPhotoPicked(event)">
+                                    <div class="photo-thumbs" id="recordPhotoThumbs"></div>
+                                </div>
                                 <button type="submit" class="btn btn-primary btn-block" id="recordSubmitBtn">記録を保存</button>
                                 <button type="button" class="btn btn-block btn-cancel-edit" id="cancelEditBtn" onclick="cancelEdit()">修正をやめる</button>
                             </form>
@@ -716,16 +742,47 @@
                                         <input type="date" id="vehicleInspectionDate">
                                     </div>
                                 </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>任意保険の満期日</label>
+                                        <input type="date" id="vehicleInsuranceDate">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>現在の走行距離（km）</label>
+                                        <input type="number" id="vehicleMileage" placeholder="0" min="0" required>
+                                    </div>
+                                </div>
                                 <div class="form-group">
-                                    <label>現在の走行距離（km）</label>
-                                    <input type="number" id="vehicleMileage" placeholder="0" min="0" required>
+                                    <label class="check-label">
+                                        <input type="checkbox" id="vehicleTaxPaid">
+                                        <span id="vehicleTaxPaidLabel">今年の自動車税（軽自動車税）は納付済み</span>
+                                    </label>
                                 </div>
                                 <button type="submit" class="btn btn-primary btn-block">情報を更新</button>
                             </form>
                         </div>
+
+                        <div class="card mt-20">
+                            <div class="card-title">💾 データの保存・バックアップ</div>
+                            <p class="help-text">万が一データが消えたときのために、ときどきバックアップを保存しておくと安心です。</p>
+                            <p class="help-text" id="lastBackupInfo"></p>
+                            <button type="button" class="btn btn-primary btn-block" onclick="downloadBackup()">💾 バックアップを保存（復元用）</button>
+                            <button type="button" class="btn btn-secondary btn-block mt-10" onclick="downloadCsv()">📊 Excelで開ける形で保存（CSV）</button>
+                            <label class="btn btn-block btn-restore mt-10" for="restoreInput">♻️ バックアップから元に戻す</label>
+                            <input type="file" id="restoreInput" accept=".json,application/json" style="display:none" onchange="restoreBackup(event)">
+                        </div>
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Photo Viewer Modal -->
+    <div class="modal" id="photoModal" onclick="if (event.target === this) closePhotoModal()">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closePhotoModal()">×</button>
+            <div class="modal-header">📷 写真</div>
+            <div id="photoModalBody"></div>
         </div>
     </div>
 
@@ -769,6 +826,10 @@
                 <div class="form-group">
                     <label>次回車検日</label>
                     <input type="date" id="newVehicleInspectionDate">
+                </div>
+                <div class="form-group">
+                    <label>任意保険の満期日</label>
+                    <input type="date" id="newVehicleInsuranceDate">
                 </div>
                 <div class="form-group">
                     <label>現在の走行距離（km）</label>
@@ -917,30 +978,8 @@
             });
             const monthCost = monthRecords.reduce((sum, r) => sum + r.cost, 0);
 
-            // 車検日アラート
-            const inspectionAlert = document.getElementById('inspectionAlert');
-            if (vehicle.inspectionDate) {
-                const inspectionDate = new Date(vehicle.inspectionDate);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const daysUntilInspection = Math.floor((inspectionDate - today) / (1000 * 60 * 60 * 24));
-
-                let alertHTML = '';
-                if (daysUntilInspection < 0) {
-                    alertHTML = `<div class="alert alert-danger"><div class="alert-icon">⚠️</div><div class="alert-content"><div class="alert-title">車検が期限切れです！</div><div class="alert-message">車検日：${escapeHtml(vehicle.inspectionDate)} - 早急に手続きを進めてください</div></div></div>`;
-                } else if (daysUntilInspection === 0) {
-                    alertHTML = `<div class="alert alert-danger"><div class="alert-icon">🚨</div><div class="alert-content"><div class="alert-title">本日が車検日です！</div><div class="alert-message">車検手続きを忘れずに行ってください</div></div></div>`;
-                } else if (daysUntilInspection <= 30) {
-                    alertHTML = `<div class="alert alert-danger"><div class="alert-icon">⚠️</div><div class="alert-content"><div class="alert-title">車検期限まで${daysUntilInspection}日です！</div><div class="alert-message">車検日：${escapeHtml(vehicle.inspectionDate)} - 早めに予約することをお勧めします</div></div></div>`;
-                } else if (daysUntilInspection <= 60) {
-                    alertHTML = `<div class="alert alert-warning"><div class="alert-icon">ℹ️</div><div class="alert-content"><div class="alert-title">車検期限まで${daysUntilInspection}日です</div><div class="alert-message">車検日：${escapeHtml(vehicle.inspectionDate)} - そろそろ予約の準備をしましょう</div></div></div>`;
-                } else if (daysUntilInspection <= 90) {
-                    alertHTML = `<div class="alert alert-success"><div class="alert-icon">✓</div><div class="alert-content"><div class="alert-title">次の車検まで${daysUntilInspection}日あります</div><div class="alert-message">車検日：${escapeHtml(vehicle.inspectionDate)}</div></div></div>`;
-                }
-                inspectionAlert.innerHTML = alertHTML;
-            } else {
-                inspectionAlert.innerHTML = `<div class="alert alert-warning"><div class="alert-icon">⚠️</div><div class="alert-content"><div class="alert-title">車検日が登録されていません</div><div class="alert-message">車両情報から次回車検日を設定してください</div></div></div>`;
-            }
+            // 車検・保険・自動車税のお知らせ
+            document.getElementById('inspectionAlert').innerHTML = buildAlerts(vehicle);
 
             document.getElementById('statsGrid').innerHTML = `
                 <div class="stat-card"><div class="stat-label">現在の走行距離</div><div class="stat-value">${vehicle.mileage.toLocaleString()} km</div></div>
@@ -965,6 +1004,72 @@
                     </div>
                 `).join('');
             }
+        }
+
+        // ===== お知らせ（車検・保険・自動車税） =====
+        function daysUntil(dateStr) {
+            const target = new Date(dateStr + 'T00:00:00');
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return Math.round((target - today) / (1000 * 60 * 60 * 24));
+        }
+
+        function alertBox(type, icon, title, message, actionHtml) {
+            return `<div class="alert alert-${type}"><div class="alert-icon">${icon}</div><div class="alert-content"><div class="alert-title">${title}</div><div class="alert-message">${message}</div>${actionHtml || ''}</div></div>`;
+        }
+
+        // 期限日のお知らせ（車検・保険で共通）
+        function deadlineAlert(name, dateStr, verb) {
+            const d = daysUntil(dateStr);
+            const dateText = escapeHtml(dateStr);
+            if (d < 0) return alertBox('danger', '⚠️', `${name}の期限が過ぎています！`, `${name}：${dateText} - 早急に手続きを進めてください`);
+            if (d === 0) return alertBox('danger', '🚨', `本日が${name}の期限です！`, `${verb}を忘れずに行ってください`);
+            if (d <= 30) return alertBox('danger', '⚠️', `${name}まで${d}日です！`, `${name}：${dateText} - 早めに${verb}しましょう`);
+            if (d <= 60) return alertBox('warning', 'ℹ️', `${name}まで${d}日です`, `${name}：${dateText} - そろそろ${verb}の準備をしましょう`);
+            if (d <= 90) return alertBox('success', '✓', `次の${name}まで${d}日あります`, `${name}：${dateText}`);
+            return '';
+        }
+
+        // 自動車税（軽自動車税）は毎年5月末が納付期限
+        function taxAlert(vehicle) {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            if (vehicle.taxPaidYear === year) return '';
+            const btn = `<button class="btn alert-action" onclick="markTaxPaid(${vehicle.id})">納付済みにする</button>`;
+            if (month === 4 && now.getDate() >= 15) {
+                return alertBox('success', '📮', 'まもなく自動車税の納付書が届きます', `5月上旬に届き、納付期限は5月31日です`, btn);
+            }
+            if (month === 5) {
+                return alertBox('warning', '💴', '自動車税の納付時期です', `納付期限は5月31日です（あと${31 - now.getDate()}日）`, btn);
+            }
+            if (month === 6) {
+                return alertBox('danger', '⚠️', '自動車税の納付期限（5月31日）を過ぎています', 'まだ納付していない場合は早めに納付してください。納付済みなら下のボタンを押してください', btn);
+            }
+            return '';
+        }
+
+        function buildAlerts(vehicle) {
+            let html = '';
+            if (vehicle.inspectionDate) {
+                html += deadlineAlert('車検', vehicle.inspectionDate, '予約');
+            } else {
+                html += alertBox('warning', '⚠️', '車検日が登録されていません', '車両情報から次回車検日を設定してください');
+            }
+            if (vehicle.insuranceDate) {
+                html += deadlineAlert('保険の満期', vehicle.insuranceDate, '更新手続き');
+            }
+            html += taxAlert(vehicle);
+            return html;
+        }
+
+        async function markTaxPaid(vehicleId) {
+            const vehicle = appData.vehicles.find(v => v.id === vehicleId);
+            if (!vehicle) return;
+            vehicle.taxPaidYear = new Date().getFullYear();
+            await saveData();
+            updateDashboard();
+            loadVehicleInfo();
         }
 
         // カテゴリ絞り込み
@@ -1003,6 +1108,7 @@
                         </div>
                         <div class="record-content">${escapeHtml(r.notes)}</div>
                         <small style="color: var(--text-muted);">走行距離: ${r.mileage} km</small>
+                        ${(r.photoIds && r.photoIds.length) ? `<div><button class="btn btn-photos" onclick="openPhotoModal(${r.id})">📷 写真を見る（${r.photoIds.length}枚）</button></div>` : ''}
                     </div>
                 `).join('');
             }
@@ -1095,7 +1201,12 @@
             document.getElementById('vehicleModelCode').value = vehicle.modelCode || '';
             document.getElementById('vehicleRegNumber').value = vehicle.regNumber || '';
             document.getElementById('vehicleInspectionDate').value = vehicle.inspectionDate || '';
+            document.getElementById('vehicleInsuranceDate').value = vehicle.insuranceDate || '';
             document.getElementById('vehicleMileage').value = vehicle.mileage;
+            const year = new Date().getFullYear();
+            document.getElementById('vehicleTaxPaid').checked = vehicle.taxPaidYear === year;
+            document.getElementById('vehicleTaxPaidLabel').textContent = `${year}年の自動車税（軽自動車税）は納付済み`;
+            updateLastBackupInfo();
         }
 
         // タブ切り替え
@@ -1121,22 +1232,39 @@
             const mileage = parseInt(document.getElementById('recordMileage').value) || 0;
             const notes = document.getElementById('recordNotes').value;
 
-            if (editingRecordId) {
-                // 修正モード：既存の記録を上書き
-                const record = appData.records.find(r => r.id === editingRecordId);
-                if (record) {
-                    record.date = date;
-                    record.cost = cost;
-                    record.category = category;
-                    record.mileage = mileage;
-                    record.notes = notes;
-                }
-            } else {
-                // 新規追加
-                appData.records.push({ id: Date.now(), vehicleId: appData.currentVehicleId, date, category, cost, mileage, notes });
-            }
+            const submitBtn = document.getElementById('recordSubmitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '保存中...';
 
-            await saveData();
+            try {
+                const recordId = editingRecordId || Date.now();
+                const photoIds = await savePhotos(recordId);
+
+                if (editingRecordId) {
+                    // 修正モード：既存の記録を上書き
+                    const record = appData.records.find(r => r.id === editingRecordId);
+                    if (record) {
+                        record.date = date;
+                        record.cost = cost;
+                        record.category = category;
+                        record.mileage = mileage;
+                        record.notes = notes;
+                        record.photoIds = photoIds;
+                    }
+                } else {
+                    // 新規追加
+                    appData.records.push({ id: recordId, vehicleId: appData.currentVehicleId, date, category, cost, mileage, notes, photoIds });
+                }
+
+                await saveData();
+            } catch (err) {
+                console.error(err);
+                alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
+                submitBtn.disabled = false;
+                submitBtn.textContent = editingRecordId ? '修正を保存' : '記録を保存';
+                return;
+            }
+            submitBtn.disabled = false;
             cancelEdit();
             renderRecords();
             updateDashboard();
@@ -1153,6 +1281,7 @@
             document.getElementById('recordCategory').value = r.category;
             document.getElementById('recordMileage').value = r.mileage || '';
             document.getElementById('recordNotes').value = r.notes || '';
+            loadPhotosForEdit(r.photoIds || []);
             document.getElementById('recordFormTitle').textContent = '✏️ 整備記録を修正中';
             document.getElementById('recordSubmitBtn').textContent = '修正を保存';
             document.getElementById('cancelEditBtn').style.display = 'inline-flex';
@@ -1167,11 +1296,21 @@
             document.getElementById('recordFormTitle').textContent = '整備記録を追加';
             document.getElementById('recordSubmitBtn').textContent = '記録を保存';
             document.getElementById('cancelEditBtn').style.display = 'none';
+            formPhotos = [];
+            removedPhotoIds = [];
+            renderPhotoThumbs();
         }
 
         // 整備記録削除
         async function deleteRecord(id) {
             if (confirm('この記録を削除してもよろしいですか？')) {
+                const target = appData.records.find(r => r.id === id);
+                if (target && target.photoIds) {
+                    for (const pid of target.photoIds) {
+                        try { await photosCol().doc(pid).delete(); } catch (e) { console.error(e); }
+                        delete photoCache[pid];
+                    }
+                }
                 appData.records = appData.records.filter(r => r.id !== id);
                 if (editingRecordId === id) cancelEdit();
                 await saveData();
@@ -1194,7 +1333,8 @@
                 modelCode: document.getElementById('newVehicleModelCode').value,
                 mileage: parseInt(document.getElementById('newVehicleMileage').value) || 0,
                 regNumber: '',
-                inspectionDate: document.getElementById('newVehicleInspectionDate').value
+                inspectionDate: document.getElementById('newVehicleInspectionDate').value,
+                insuranceDate: document.getElementById('newVehicleInsuranceDate').value
             });
             if (!appData.currentVehicleId) {
                 appData.currentVehicleId = appData.vehicles[0].id;
@@ -1217,11 +1357,283 @@
             vehicle.modelCode = document.getElementById('vehicleModelCode').value;
             vehicle.regNumber = document.getElementById('vehicleRegNumber').value;
             vehicle.inspectionDate = document.getElementById('vehicleInspectionDate').value;
+            vehicle.insuranceDate = document.getElementById('vehicleInsuranceDate').value;
             vehicle.mileage = parseInt(document.getElementById('vehicleMileage').value);
+            const thisYear = new Date().getFullYear();
+            if (document.getElementById('vehicleTaxPaid').checked) {
+                vehicle.taxPaidYear = thisYear;
+            } else if (vehicle.taxPaidYear === thisYear) {
+                vehicle.taxPaidYear = null;
+            }
             await saveData();
             renderVehicles();
             updateDashboard();
             alert('車両情報を更新しました');
+        }
+
+        // ===== 写真（レシート・明細） =====
+        // 写真は記録本体とは別の場所（users/{uid}/photos）に1枚ずつ保存する
+        const MAX_PHOTOS = 5;
+        let formPhotos = [];        // フォームに表示中の写真 { id, dataUrl, isNew }
+        let removedPhotoIds = [];   // 修正中に外した既存写真
+        const photoCache = {};      // 読み込み済みの写真 id → dataUrl
+
+        function photosCol() {
+            return db.collection('users').doc(currentUser.uid).collection('photos');
+        }
+
+        async function getPhotoData(id) {
+            if (photoCache[id]) return photoCache[id];
+            const doc = await photosCol().doc(id).get();
+            const dataUrl = doc.exists ? doc.data().dataUrl : null;
+            if (dataUrl) photoCache[id] = dataUrl;
+            return dataUrl;
+        }
+
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+            });
+        }
+
+        // スマホの写真は大きいので、保存できるサイズ（約0.7MB以下）に縮小する
+        async function compressImage(file) {
+            const url = URL.createObjectURL(file);
+            try {
+                const img = await loadImage(url);
+                let maxSide = 1600;
+                for (let attempt = 0; attempt < 6; attempt++) {
+                    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.width * scale);
+                    canvas.height = Math.round(img.height * scale);
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+                    if (dataUrl.length < 700000) return dataUrl;
+                    maxSide = Math.round(maxSide * 0.8);
+                }
+                throw new Error('画像が大きすぎます');
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        async function onPhotoPicked(e) {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            for (const file of files) {
+                if (formPhotos.length >= MAX_PHOTOS) {
+                    alert(`写真は1件の記録につき${MAX_PHOTOS}枚までです`);
+                    break;
+                }
+                try {
+                    const dataUrl = await compressImage(file);
+                    formPhotos.push({ id: null, dataUrl, isNew: true });
+                    renderPhotoThumbs();
+                } catch (err) {
+                    console.error(err);
+                    alert('写真を読み込めませんでした: ' + file.name);
+                }
+            }
+        }
+
+        function renderPhotoThumbs() {
+            const box = document.getElementById('recordPhotoThumbs');
+            if (!box) return;
+            box.innerHTML = formPhotos.map((p, i) => `
+                <div class="photo-thumb">
+                    ${p.dataUrl ? `<img src="${p.dataUrl}" alt="写真${i + 1}">` : '<div class="help-text" style="padding:6px;font-size:0.7em;">読込中</div>'}
+                    <button type="button" class="photo-remove" onclick="removeFormPhoto(${i})" aria-label="写真を外す">×</button>
+                </div>
+            `).join('');
+        }
+
+        function removeFormPhoto(index) {
+            const p = formPhotos[index];
+            if (!p) return;
+            if (!p.isNew && p.id) removedPhotoIds.push(p.id);
+            formPhotos.splice(index, 1);
+            renderPhotoThumbs();
+        }
+
+        async function loadPhotosForEdit(ids) {
+            formPhotos = ids.map(id => ({ id, dataUrl: photoCache[id] || null, isNew: false }));
+            removedPhotoIds = [];
+            renderPhotoThumbs();
+            for (const p of formPhotos) {
+                if (!p.dataUrl) {
+                    try { p.dataUrl = await getPhotoData(p.id); } catch (e) { console.error(e); }
+                    renderPhotoThumbs();
+                }
+            }
+        }
+
+        // フォームの写真を保存し、記録に付ける写真IDの一覧を返す
+        async function savePhotos(recordId) {
+            for (const id of removedPhotoIds) {
+                try { await photosCol().doc(id).delete(); } catch (e) { console.error(e); }
+                delete photoCache[id];
+            }
+            removedPhotoIds = [];
+            const ids = [];
+            for (const p of formPhotos) {
+                if (p.isNew) {
+                    const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 7);
+                    await photosCol().doc(id).set({ dataUrl: p.dataUrl, recordId, createdAt: new Date().toISOString() });
+                    photoCache[id] = p.dataUrl;
+                    p.id = id;
+                    p.isNew = false;
+                }
+                if (p.id) ids.push(p.id);
+            }
+            return ids;
+        }
+
+        async function openPhotoModal(recordId) {
+            const r = appData.records.find(x => x.id === recordId);
+            if (!r || !r.photoIds) return;
+            const body = document.getElementById('photoModalBody');
+            document.querySelector('#photoModal .modal-header').textContent = '📷 写真';
+            body.innerHTML = '<p class="help-text">読み込み中...</p>';
+            document.getElementById('photoModal').classList.add('active');
+            const parts = [];
+            for (const id of r.photoIds) {
+                try {
+                    const dataUrl = await getPhotoData(id);
+                    if (dataUrl) parts.push(`<img class="photo-full" src="${dataUrl}" alt="写真">`);
+                } catch (e) { console.error(e); }
+            }
+            body.innerHTML = parts.length ? parts.join('') : '<p class="help-text">写真を読み込めませんでした</p>';
+        }
+
+        function closePhotoModal() {
+            document.getElementById('photoModal').classList.remove('active');
+        }
+
+        // ===== バックアップ・CSV保存 =====
+        function todayStamp() {
+            const d = new Date();
+            return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+        }
+
+        function isMobile() {
+            return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        }
+
+        // ファイルを保存する。スマホは「準備できました」画面のボタンから共有メニュー経由で保存する
+        function saveFile(blob, filename, description) {
+            const file = new File([blob], filename, { type: blob.type });
+            const canShare = isMobile() && navigator.canShare && navigator.canShare({ files: [file] });
+            if (!canShare) {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+                return;
+            }
+            const body = document.getElementById('photoModalBody');
+            document.querySelector('#photoModal .modal-header').textContent = '💾 保存の準備ができました';
+            body.innerHTML = `
+                <p class="help-text">${escapeHtml(description)}<br>下のボタンを押して、表示されたメニューから「"ファイル"に保存」を選んでください。</p>
+                <button type="button" class="btn btn-primary btn-block" id="shareSaveBtn">保存する</button>
+            `;
+            document.getElementById('shareSaveBtn').onclick = async () => {
+                try {
+                    await navigator.share({ files: [file], title: filename });
+                    closePhotoModal();
+                } catch (e) {
+                    if (e.name !== 'AbortError') alert('保存できませんでした: ' + e.message);
+                }
+            };
+            document.getElementById('photoModal').classList.add('active');
+        }
+
+        async function downloadBackup() {
+            try {
+                let photos = [];
+                const snap = await photosCol().get();
+                snap.forEach(doc => photos.push({ id: doc.id, ...doc.data() }));
+                const backup = {
+                    app: 'CarLog',
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    data: appData,
+                    photos
+                };
+                const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+                appData.lastBackupAt = backup.exportedAt;
+                await saveData();
+                updateLastBackupInfo();
+                saveFile(blob, `carlog-backup-${todayStamp()}.json`, `車両${appData.vehicles.length}台・記録${appData.records.length}件・写真${photos.length}枚のバックアップです。`);
+            } catch (e) {
+                console.error(e);
+                alert('バックアップの作成に失敗しました: ' + e.message);
+            }
+        }
+
+        function csvCell(v) {
+            const s = v === undefined || v === null ? '' : String(v);
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+
+        function downloadCsv() {
+            const header = ['車両名', '整備日', 'カテゴリ', '費用', '走行距離(km)', 'メモ', '写真枚数'];
+            const rows = [...appData.records]
+                .sort((a, b) => (a.vehicleId - b.vehicleId) || a.date.localeCompare(b.date))
+                .map(r => {
+                    const v = appData.vehicles.find(x => x.id === r.vehicleId);
+                    return [v ? v.name : '', r.date, r.category, r.cost, r.mileage, r.notes, (r.photoIds || []).length];
+                });
+            const csv = [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
+            saveFile(blob, `carlog-records-${todayStamp()}.csv`, `整備記録${rows.length}件をExcelで開ける形で保存します。`);
+        }
+
+        async function restoreBackup(e) {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            try {
+                const backup = JSON.parse(await file.text());
+                const data = backup && backup.data;
+                if (!backup || backup.app !== 'CarLog' || !data || !Array.isArray(data.vehicles) || !Array.isArray(data.records)) {
+                    alert('CarLogのバックアップファイルではないようです。');
+                    return;
+                }
+                const when = backup.exportedAt ? new Date(backup.exportedAt).toLocaleString('ja-JP') : '不明';
+                if (!confirm(`${when} のバックアップ（車両${data.vehicles.length}台・記録${data.records.length}件）に戻します。\n\n今のデータはこのバックアップの内容に置き換わります。よろしいですか？`)) return;
+
+                for (const p of (backup.photos || [])) {
+                    if (!p.id || !p.dataUrl) continue;
+                    await photosCol().doc(p.id).set({ dataUrl: p.dataUrl, recordId: p.recordId || null, createdAt: p.createdAt || new Date().toISOString() });
+                    photoCache[p.id] = p.dataUrl;
+                }
+                appData = data;
+                await saveData();
+                cancelEdit();
+                renderAll();
+                alert('バックアップから元に戻しました。');
+            } catch (err) {
+                console.error(err);
+                alert('復元に失敗しました: ' + err.message);
+            }
+        }
+
+        function updateLastBackupInfo() {
+            const el = document.getElementById('lastBackupInfo');
+            if (!el) return;
+            el.textContent = appData.lastBackupAt
+                ? '前回のバックアップ：' + new Date(appData.lastBackupAt).toLocaleDateString('ja-JP')
+                : 'まだバックアップを保存していません。';
         }
 
         function openAddVehicleModal() { document.getElementById('addVehicleModal').classList.add('active'); }
